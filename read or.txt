@@ -1,0 +1,115 @@
+# LLaMA in Pure Java
+
+A complete, dependency-free implementation of the LLaMA transformer in pure Java — no JNI, no native libraries, no deep-learning frameworks.
+
+## Architecture
+
+```
+llama/
+├── ModelConfig.java       — Hyperparameters (dim, layers, heads, vocab, …)
+├── ModelWeights.java      — All learned weight arrays
+├── Tensor.java            — Math ops: matmul, rmsnorm, softmax, silu
+├── RoPE.java              — Rotary Position Embedding
+├── KVCache.java           — Key-value cache for efficient decoding
+├── Transformer.java       — Full forward pass (attention + FFN)
+├── Tokenizer.java         — BPE tokenizer (SentencePiece-compatible)
+├── Sampler.java           — Greedy / temperature / top-p / top-k sampling
+├── LlamaRunner.java       — High-level generation loop (streaming)
+├── CheckpointLoader.java  — Load llama2.c binary checkpoints
+├── Main.java              — CLI entry point
+└── LlamaTest.java         — Unit tests
+```
+
+## Supported Models
+
+|Model      |Config factory            |Notes                        |
+|-----------|--------------------------|-----------------------------|
+|TinyLLaMA  |`ModelConfig.tinyLlama()` |288-dim, 6L, 6H — for testing|
+|LLaMA-2 7B |`ModelConfig.llama2_7B()` |4096-dim, 32L, 32H           |
+|LLaMA-2 13B|`ModelConfig.llama2_13B()`|5120-dim, 40L, 40H           |
+|LLaMA-3 8B |`ModelConfig.llama3_8B()` |GQA: 32Q / 8KV heads         |
+
+## Building
+
+### Compile
+
+```bash
+# Compile all sources
+javac -d out src/main/java/llama/*.java
+
+# Or with Maven
+mvn compile
+```
+
+### Run Demo (no model files needed)
+
+```bash
+java -cp out llama.Main --demo --prompt "Once upon a time" --steps 100
+```
+
+### Run with a real checkpoint
+
+Download a llama2.c-format checkpoint (e.g. stories15M.bin from karpathy/llama2.c):
+
+```bash
+java -Xmx8g -cp out llama.Main \
+    stories15M.bin tokenizer.bin \
+    --prompt "In a kingdom far away" \
+    --steps 200 \
+    --temp 0.8 \
+    --topp 0.9
+```
+
+### Run tests (JUnit 5)
+
+```bash
+# With Maven
+mvn test
+
+# Manually (requires junit-platform-console-standalone.jar)
+java -jar junit-platform-console-standalone.jar \
+    --class-path out --scan-class-path
+```
+
+## Key Implementation Details
+
+### Grouped Query Attention (GQA)
+
+LLaMA-3 uses GQA where multiple query heads share a single KV head:
+
+```java
+int kvHead = headIndex / kvMul;   // which KV head this Q head reads
+```
+
+### RoPE
+
+Frequencies precomputed at construction, applied in-place:
+
+```
+[x0, x1] → [x0·cos(θ) − x1·sin(θ),  x0·sin(θ) + x1·cos(θ)]
+```
+
+### SwiGLU Feed-Forward
+
+```java
+out = (W1·x ⊙ SiLU(W3·x)) · W2
+```
+
+### KV Cache
+
+Avoids recomputing keys/values for previous tokens:
+
+```java
+kvCache.storeKey(layer, pos, k);
+kvCache.storeVal(layer, pos, v);
+```
+
+## Performance Notes
+
+- Pure Java float32 — no SIMD/AVX optimizations
+- ~15-50 tok/s for tiny models on modern JVM
+- For production speeds: Panama Vector API (`FloatVector`) or JNI BLAS
+
+## License
+
+MIT
